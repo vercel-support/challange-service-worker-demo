@@ -1,277 +1,212 @@
-import { type NextRequest, NextResponse } from "next/server"
+import { NextResponse } from 'next/server'
 
-export async function GET(request: NextRequest) {
-  // Get the return URL and original URL from query parameters
-  const searchParams = request.nextUrl.searchParams
-  const returnUrl = searchParams.get("returnUrl") || "/"
-  const originalUrl = searchParams.get("originalUrl")
-  const requestId = searchParams.get("requestId")
+// Constants
+const MAX_RETRIES = 3
+const RETRY_DELAY = 2000 // 2 seconds
 
-  console.log("[CHALLENGE RESOLUTION PAGE] 🛡️", {
-    originalUrl,
-    returnUrl,
-    requestId,
-    timestamp: new Date().toISOString(),
-    userAgent: request.headers.get("user-agent"),
-    ip: request.headers.get("x-forwarded-for") || "unknown",
-  })
+// Types for log messages
+type LogLevel = 'info' | 'warning' | 'error' | 'success'
 
-  // Create an HTML page that will:
-  // 1. Trigger the Vercel challenge in a full page context
-  // 2. Redirect back to the return URL after the challenge is resolved
-  const html = `
+interface LogMessage {
+  message: string
+  level: LogLevel
+  timestamp: string
+}
+
+/**
+ * Generates HTML for the challenge resolution page
+ */
+function generateHTML(
+  originalUrl: string,
+  returnUrl: string,
+  logs: LogMessage[] = []
+): string {
+  return `
     <!DOCTYPE html>
-    <html>
-      <head>
-        <title>Security Verification Required</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Security Verification</title>
         <style>
-          body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            margin: 0;
-            padding: 20px;
-            text-align: center;
-            background-color: #f5f5f5;
-            color: #333;
-          }
-          .card {
-            background: white;
-            border-radius: 12px;
-            padding: 32px;
-            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
-            max-width: 500px;
-            width: 100%;
-          }
-          .spinner {
-            border: 3px solid rgba(0, 0, 0, 0.1);
-            border-radius: 50%;
-            border-top: 3px solid #000;
-            width: 24px;
-            height: 24px;
-            animation: spin 1s linear infinite;
-            margin: 20px auto;
-          }
-          @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-          }
-          .log {
-            background: #f7f7f7;
-            border-radius: 8px;
-            padding: 12px;
-            margin-top: 20px;
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-            text-align: left;
-            font-size: 12px;
-            max-height: 120px;
-            overflow-y: auto;
-            border: 1px solid #eaeaea;
-          }
-          .log-entry {
-            margin: 4px 0;
-            line-height: 1.4;
-          }
-          .error {
-            color: #e11d48;
-          }
-          .success {
-            color: #059669;
-          }
-          .warning {
-            color: #d97706;
-          }
-          .retry-button {
-            background: #000;
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 6px;
-            font-size: 14px;
-            cursor: pointer;
-            margin-top: 16px;
-            transition: background-color 0.2s;
-          }
-          .retry-button:hover {
-            background: #333;
-          }
-          .retry-button:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-          }
-          @media (prefers-color-scheme: dark) {
             body {
-              background-color: #1a1a1a;
-              color: #fff;
+                font-family: system-ui, -apple-system, sans-serif;
+                line-height: 1.5;
+                margin: 0;
+                padding: 20px;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                background: #f5f5f5;
             }
-            .card {
-              background: #262626;
+            .container {
+                max-width: 600px;
+                width: 100%;
+                background: white;
+                padding: 2rem;
+                border-radius: 8px;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            }
+            h1 {
+                margin-top: 0;
+                color: #333;
+            }
+            .status {
+                margin: 1rem 0;
+                padding: 1rem;
+                border-radius: 4px;
+                background: #f8f9fa;
             }
             .log {
-              background: #333;
-              border-color: #404040;
+                margin: 1rem 0;
+                padding: 1rem;
+                border-radius: 4px;
+                font-family: monospace;
+                font-size: 0.9rem;
+                max-height: 200px;
+                overflow-y: auto;
+                background: #f8f9fa;
             }
-            .retry-button {
-              background: #fff;
-              color: #000;
+            .log-entry {
+                margin: 0.5rem 0;
+                padding: 0.5rem;
+                border-radius: 4px;
             }
-            .retry-button:hover {
-              background: #e5e5e5;
+            .info { background: #e3f2fd; }
+            .warning { background: #fff3e0; }
+            .error { background: #ffebee; }
+            .success { background: #e8f5e9; }
+            #verifyButton {
+                background: #0070f3;
+                color: white;
+                border: none;
+                padding: 0.75rem 1.5rem;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 1rem;
+                transition: background 0.2s;
             }
-            .retry-button:disabled {
-              background: #404040;
-              color: #666;
+            #verifyButton:hover {
+                background: #0051a8;
             }
-          }
+            #verifyButton:disabled {
+                background: #ccc;
+                cursor: not-allowed;
+            }
         </style>
-      </head>
-      <body>
-        <div class="card">
-          <h2>Security Verification Required</h2>
-          <p>We're verifying your browser to protect our service. This should only take a moment.</p>
-          <div class="spinner"></div>
-          <p id="status">Initiating verification...</p>
-          <div id="log" class="log"></div>
-          <button id="retryButton" class="retry-button" style="display: none;" onclick="retryVerification()">
-            Retry Verification
-          </button>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Security Verification</h1>
+            <div id="status" class="status">
+                Preparing verification...
+            </div>
+            <div id="log" class="log">
+                ${logs.map(log => `
+                    <div class="log-entry ${log.level}">
+                        [${log.timestamp}] ${log.message}
+                    </div>
+                `).join('')}
+            </div>
+            <button id="verifyButton" onclick="startVerification()">
+                Start Verification
+            </button>
         </div>
-        
         <script>
-          const MAX_RETRIES = 3;
-          const RETRY_DELAY = 2000;
-          let retryCount = 0;
-          let isVerifying = false;
+            // Store URLs for verification
+            const originalUrl = ${JSON.stringify(originalUrl)};
+            const returnUrl = ${JSON.stringify(returnUrl)};
+            let retryCount = 0;
 
-          // Function to update the status message
-          function updateStatus(message, type = 'info') {
-            const statusEl = document.getElementById('status');
-            statusEl.textContent = message;
-            statusEl.className = type;
-          }
-          
-          // Function to add a log entry
-          function addLog(message, type = 'info') {
-            const logEl = document.getElementById('log');
-            const entry = document.createElement('div');
-            entry.className = \`log-entry \${type}\`;
-            entry.textContent = \`[\${new Date().toLocaleTimeString()}] \${message}\`;
-            logEl.insertBefore(entry, logEl.firstChild);
-            
-            // Also log to console for debugging
-            console.log(\`[CHALLENGE RESOLUTION] [\${type.toUpperCase()}] \${message}\`);
-          }
-
-          // Function to show/hide retry button
-          function toggleRetryButton(show) {
-            const button = document.getElementById('retryButton');
-            button.style.display = show ? 'inline-block' : 'none';
-            button.disabled = isVerifying;
-          }
-          
-          // Function to verify the browser and handle the challenge
-          async function verifyBrowser() {
-            if (isVerifying) return;
-            isVerifying = true;
-            toggleRetryButton(false);
-
-            try {
-              updateStatus('Verifying your browser...', 'info');
-              addLog('Starting browser verification process');
-              
-              const originalUrl = ${JSON.stringify(originalUrl)};
-              const requestId = ${JSON.stringify(requestId)};
-              
-              if (originalUrl) {
-                addLog(\`Attempting to verify URL: \${originalUrl}\`);
-                
-                // Make a fetch request to the original URL to trigger/resolve the challenge
-                const response = await fetch(originalUrl, {
-                  credentials: 'include', // Include cookies
-                  headers: {
-                    'X-Request-ID': requestId || 'unknown',
-                  }
-                });
-                
-                if (response.ok) {
-                  addLog('Verification successful!', 'success');
-                  updateStatus('Verification complete! Redirecting...', 'success');
-                  
-                  // Small delay before redirect to show success message
-                  setTimeout(() => {
-                    window.location.href = ${JSON.stringify(returnUrl)};
-                  }, 1000);
-                  return;
-                }
-                
-                // If we get a 403, the challenge might need more time
-                if (response.status === 403) {
-                  throw new Error('Challenge verification in progress');
-                }
-                
-                throw new Error(\`Unexpected response: \${response.status}\`);
-              } else {
-                addLog('No verification URL provided', 'warning');
-                updateStatus('Preparing verification...', 'warning');
-                await new Promise(resolve => setTimeout(resolve, 1000));
-              }
-              
-              // If we get here without a redirect, try the return URL
-              addLog(\`Redirecting to: \${${JSON.stringify(returnUrl)}}\`);
-              window.location.href = ${JSON.stringify(returnUrl)};
-              
-            } catch (error) {
-              console.error('Error during verification:', error);
-              addLog(\`Error: \${error.message}\`, 'error');
-              
-              if (retryCount < MAX_RETRIES) {
-                retryCount++;
-                addLog(\`Retry \${retryCount}/\${MAX_RETRIES} in \${RETRY_DELAY/1000}s...`, 'warning');
-                updateStatus(\`Verification failed. Retrying in \${RETRY_DELAY/1000} seconds...\`, 'warning');
-                
-                setTimeout(() => {
-                  isVerifying = false;
-                  verifyBrowser();
-                }, RETRY_DELAY);
-              } else {
-                updateStatus('Verification failed. Please try again.', 'error');
-                addLog('Maximum retry attempts reached', 'error');
-                toggleRetryButton(true);
-              }
-            } finally {
-              isVerifying = false;
+            // Update the status message
+            function updateStatus(message, level = 'info') {
+                const status = document.getElementById('status');
+                status.textContent = message;
+                status.className = 'status ' + level;
             }
-          }
-          
-          // Function to manually retry verification
-          function retryVerification() {
-            retryCount = 0;
-            verifyBrowser();
-          }
-          
-          // Start the verification process
-          verifyBrowser();
-          
-          // Listen for visibility changes to retry verification when tab becomes visible
-          document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible' && !isVerifying) {
-              addLog('Tab became visible, retrying verification...', 'info');
-              retryVerification();
+
+            // Add a log message
+            function addLog(message, level = 'info') {
+                const log = document.getElementById('log');
+                const entry = document.createElement('div');
+                entry.className = 'log-entry ' + level;
+                entry.textContent = '[' + new Date().toISOString() + '] ' + message;
+                log.appendChild(entry);
+                log.scrollTop = log.scrollHeight;
             }
-          });
+
+            // Start the verification process
+            async function startVerification() {
+                const button = document.getElementById('verifyButton');
+                button.disabled = true;
+                
+                try {
+                    updateStatus('Verifying...', 'info');
+                    addLog('Starting verification process');
+                    
+                    // Attempt to fetch the original URL
+                    const response = await fetch(originalUrl, {
+                        credentials: 'include'
+                    });
+                    
+                    if (response.ok) {
+                        addLog('Verification successful', 'success');
+                        updateStatus('Verification successful! Redirecting...', 'success');
+                        
+                        // Redirect back to the return URL
+                        setTimeout(() => {
+                            window.location.href = returnUrl;
+                        }, 1000);
+                    } else {
+                        if (retryCount < ${MAX_RETRIES}) {
+                            retryCount++;
+                            addLog('Retry ' + retryCount + '/' + ${MAX_RETRIES} + ' in ' + ${RETRY_DELAY}/1000 + 's...', 'warning');
+                            updateStatus('Verification failed. Retrying in ' + ${RETRY_DELAY}/1000 + ' seconds...', 'warning');
+                            
+                            setTimeout(() => {
+                                button.disabled = false;
+                                startVerification();
+                            }, ${RETRY_DELAY});
+                        } else {
+                            addLog('Maximum retry attempts reached', 'error');
+                            updateStatus('Verification failed. Please try again later.', 'error');
+                            button.disabled = false;
+                        }
+                    }
+                } catch (error) {
+                    addLog('Error during verification: ' + error.message, 'error');
+                    updateStatus('Verification failed. Please try again.', 'error');
+                    button.disabled = false;
+                }
+            }
+
+            // Start verification automatically
+            startVerification();
         </script>
-      </body>
+    </body>
     </html>
   `
+}
+
+/**
+ * Handle GET requests to the challenge resolution endpoint
+ */
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url)
+  const originalUrl = searchParams.get('originalUrl')
+  const returnUrl = searchParams.get('returnUrl')
+
+  if (!originalUrl || !returnUrl) {
+    return new NextResponse('Missing required parameters', { status: 400 })
+  }
+
+  // Generate the challenge resolution page
+  const html = generateHTML(originalUrl, returnUrl)
 
   return new NextResponse(html, {
     headers: {
-      "Content-Type": "text/html",
-      "Cache-Control": "no-store, must-revalidate",
+      'Content-Type': 'text/html',
     },
   })
 }
