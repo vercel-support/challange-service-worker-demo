@@ -1,36 +1,41 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Vercel Challenge Handler Demo
 
-## Getting Started
+This project demonstrates how to handle Vercel's DDoS protection challenges in a Next.js application, particularly for API requests, WebSockets, and service worker interactions.
 
-First, run the development server:
+## The Problem
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+Vercel's Web Application Firewall (WAF) and DDoS protection system can sometimes challenge requests to protect your application from attacks. While this works well for regular page navigation, it can cause issues with:
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+- API requests made via `fetch()`
+- WebSocket connections (like Socket.io)
+- Service worker intercepted requests
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+The challenge occurs because:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Vercel sends a 403 response with a challenge
+2. For regular page navigation, the browser can complete this challenge
+3. For fetch/API requests, the challenge can't be properly completed
+4. This leads to failed requests and broken functionality
 
-## Learn More
+Common symptoms include:
+- API requests failing with 403 errors
+- WebSocket connections being dropped
+- "Failed to verify your browser" messages
+- Issues occurring more in Chrome than other browsers
 
-To learn more about Next.js, take a look at the following resources:
+## The Solution
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+This demo implements a comprehensive solution that:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1. Detects when a request is being challenged by Vercel
+2. Redirects to a full-page challenge resolution flow
+3. Returns to the original page/functionality after the challenge is resolved
+4. Handles service worker interactions properly
 
-## Deploy on Vercel
+## Demo Instructions
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### Setup
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Clone this repository
+2. Install dependencies:
+
