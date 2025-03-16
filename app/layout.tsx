@@ -1,11 +1,13 @@
 import type React from "react"
-import type { Metadata } from "next"
 import "./globals.css"
-import ClientLayout from "./clientLayout"
+import { Inter } from "next/font/google"
+import { ThemeProvider } from "@/components/theme-provider"
 
-export const metadata: Metadata = {
+const inter = Inter({ subsets: ["latin"] })
+
+export const metadata = {
   title: "Vercel Challenge Handler Demo",
-  description: "A demo showing how to handle Vercel security challenges",
+  description: "Demo app showing how to handle Vercel DDoS challenges in service workers",
     generator: 'v0.dev'
 }
 
@@ -15,13 +17,12 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <head>
-        <meta charSet="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-      </head>
-      <body suppressHydrationWarning>
-        <ClientLayout>{children}</ClientLayout>
+    <html lang="en">
+      <head />
+      <body className={inter.className}>
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+          {children}
+        </ThemeProvider>
       </body>
     </html>
   )
