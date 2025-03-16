@@ -9,10 +9,68 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(clients.claim())
 })
 
+// Function to check if a response is a Vercel challenge (for logging purposes only)
+function detectVercelChallenge(response) {
+  // Log all headers for debugging
+  const headers = {}
+  response.headers.forEach((value, key) => {
+    headers[key] = value
+  })
+  console.log("[Problem SW] Response headers:", headers)
+
+  // Check for various challenge indicators
+  const challengeIndicators = {
+    // Status code check
+    status: response.status === 403,
+    
+    // Vercel-specific headers
+    vercelServer: response.headers.get("server")?.toLowerCase().includes("vercel"),
+    vercelProtection: response.headers.get("x-vercel-protection") !== null,
+    vercelProxy: response.headers.get("x-vercel-proxy") !== null,
+    
+    // Challenge-specific headers
+    challengeHeader: response.headers.get("x-vercel-challenge") !== null,
+    securityHeaders: response.headers.get("x-vercel-security") !== null,
+    
+    // Content type check (challenges often return HTML)
+    contentType: response.headers.get("content-type")?.toLowerCase().includes("text/html"),
+  }
+
+  console.log("[Problem SW] Challenge indicators:", challengeIndicators)
+
+  // A request is considered challenged if:
+  // 1. Status is 403 AND
+  // 2. At least one Vercel-specific header is present
+  const isChallenge = challengeIndicators.status && (
+    challengeIndicators.vercelServer ||
+    challengeIndicators.vercelProtection ||
+    challengeIndicators.vercelProxy ||
+    challengeIndicators.challengeHeader ||
+    challengeIndicators.securityHeaders
+  )
+
+  if (isChallenge) {
+    console.log("[Problem SW] ⚠️ Vercel challenge detected!")
+    console.log("[Problem SW] Indicators that triggered detection:", 
+      Object.entries(challengeIndicators)
+        .filter(([_, value]) => value)
+        .map(([key]) => key)
+        .join(", ")
+    )
+    console.log("[Problem SW] ⚠️ This service worker cannot handle challenges - the request will fail")
+  }
+
+  return {
+    isChallenge,
+    indicators: challengeIndicators,
+    headers
+  }
+}
+
 // Intercept fetch requests
 self.addEventListener("fetch", (event) => {
-  // Only intercept API requests to the challenged endpoint
-  if (event.request.url.includes("/api/challenged-endpoint")) {
+  // Intercept both the test and challenged endpoints
+  if (event.request.url.includes("/api/challenged-endpoint") || event.request.url.includes("/api/test-challenge")) {
     const requestUrl = new URL(event.request.url)
 
     // Check if this request is already tagged for the problem service worker
@@ -38,12 +96,29 @@ self.addEventListener("fetch", (event) => {
             const responseTime = Date.now() - startTime
             console.log(`[Problem SW] Received response: ${response.status} (${responseTime}ms)`)
 
-            // Log response headers for debugging
-            const headers = {}
-            response.headers.forEach((value, key) => {
-              headers[key] = value
-            })
-            console.log("[Problem SW] Response headers:", headers)
+            // Check if this is a challenge response
+            const challengeCheck = detectVercelChallenge(response)
+            
+            if (challengeCheck.isChallenge) {
+              // Return a more descriptive error for the demo
+              return new Response(
+                JSON.stringify({
+                  error: "Vercel security challenge detected",
+                  message: "This service worker cannot handle challenges",
+                  timestamp: new Date().toISOString(),
+                  via: "problem-sw",
+                  details: {
+                    status: response.status,
+                    headers: challengeCheck.headers,
+                    indicators: challengeCheck.indicators
+                  }
+                }),
+                {
+                  status: 403,
+                  headers: { "Content-Type": "application/json" },
+                },
+              )
+            }
 
             // Clone the response before reading it
             const responseClone = response.clone()

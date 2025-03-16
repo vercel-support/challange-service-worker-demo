@@ -11,12 +11,55 @@ self.addEventListener("activate", (event) => {
 
 // Function to check if a response is a Vercel challenge
 function isVercelChallenge(response) {
-  // Check for status code (usually 403)
-  if (response.status === 403) {
-    // Check for Vercel challenge headers or content
-    return response.headers.get("server") === "Vercel" || response.headers.get("x-vercel-protection") !== null
+  // Log all headers for debugging
+  const headers = {}
+  response.headers.forEach((value, key) => {
+    headers[key] = value
+  })
+  console.log("[Solution SW] Response headers:", headers)
+
+  // Check for various challenge indicators
+  const challengeIndicators = {
+    // Status code check
+    status: response.status === 403,
+    
+    // Vercel-specific headers
+    vercelServer: response.headers.get("server")?.toLowerCase().includes("vercel"),
+    vercelProtection: response.headers.get("x-vercel-protection") !== null,
+    vercelProxy: response.headers.get("x-vercel-proxy") !== null,
+    
+    // Challenge-specific headers
+    challengeHeader: response.headers.get("x-vercel-challenge") !== null,
+    securityHeaders: response.headers.get("x-vercel-security") !== null,
+    
+    // Content type check (challenges often return HTML)
+    contentType: response.headers.get("content-type")?.toLowerCase().includes("text/html"),
   }
-  return false
+
+  console.log("[Solution SW] Challenge indicators:", challengeIndicators)
+
+  // A request is considered challenged if:
+  // 1. Status is 403 AND
+  // 2. At least one Vercel-specific header is present
+  const isChallenge = challengeIndicators.status && (
+    challengeIndicators.vercelServer ||
+    challengeIndicators.vercelProtection ||
+    challengeIndicators.vercelProxy ||
+    challengeIndicators.challengeHeader ||
+    challengeIndicators.securityHeaders
+  )
+
+  if (isChallenge) {
+    console.log("[Solution SW] ⚠️ Vercel challenge detected!")
+    console.log("[Solution SW] Indicators that triggered detection:", 
+      Object.entries(challengeIndicators)
+        .filter(([_, value]) => value)
+        .map(([key]) => key)
+        .join(", ")
+    )
+  }
+
+  return isChallenge
 }
 
 // Intercept fetch requests
@@ -48,17 +91,8 @@ self.addEventListener("fetch", (event) => {
             const responseTime = Date.now() - startTime
             console.log(`[Solution SW] Received response: ${response.status} (${responseTime}ms)`)
 
-            // Log response headers for debugging
-            const headers = {}
-            response.headers.forEach((value, key) => {
-              headers[key] = value
-            })
-            console.log("[Solution SW] Response headers:", headers)
-
             // Check if the response is a Vercel challenge
             if (isVercelChallenge(response)) {
-              console.log("[Solution SW] Vercel challenge detected")
-
               // Notify the main thread about the challenge
               const allClients = await clients.matchAll({ includeUncontrolled: true })
               for (const client of allClients) {
@@ -66,7 +100,7 @@ self.addEventListener("fetch", (event) => {
                   type: "CHALLENGE_DETECTED",
                   url: requestUrl.toString(),
                   status: response.status,
-                  headers: headers,
+                  headers: Object.fromEntries(response.headers.entries()),
                 })
               }
 
@@ -77,6 +111,10 @@ self.addEventListener("fetch", (event) => {
                   message: "The application will handle this challenge in-page",
                   timestamp: new Date().toISOString(),
                   via: "solution-sw",
+                  details: {
+                    status: response.status,
+                    headers: Object.fromEntries(response.headers.entries()),
+                  }
                 }),
                 {
                   status: 403,

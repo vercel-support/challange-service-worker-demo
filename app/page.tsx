@@ -15,10 +15,24 @@ export default function Home() {
 
   // Problem demo state
   const [problemServiceWorkerRegistered, setProblemServiceWorkerRegistered] = useState(false)
-  const [problemApiResponse, setProblemApiResponse] = useState<any | null>(null)
+  const [problemApiResponse, setProblemApiResponse] = useState<Record<string, unknown> | null>(null)
   const [problemError, setProblemError] = useState<string | null>(null)
   const [problemLoading, setProblemLoading] = useState(false)
   const [problemLogs, setProblemLogs] = useState<string[]>([])
+  const [numRequests, setNumRequests] = useState(10)
+
+  interface TestResult {
+    status: number
+    headers: Record<string, string>
+    body: string
+  }
+
+  interface TestResponse {
+    message: string
+    results: TestResult[]
+    requestId: string
+    via: string
+  }
 
   // Solution demo state
   const [solutionServiceWorkerRegistered, setSolutionServiceWorkerRegistered] = useState(false)
@@ -153,12 +167,12 @@ export default function Home() {
     setProblemLoading(true)
     setProblemApiResponse(null)
     setProblemError(null)
-    addProblemLog("Making API request via problem service worker...")
+    addProblemLog(`Making ${numRequests} rapid API requests via problem service worker...`)
 
     try {
       // This will be intercepted by the service worker
       // Add via parameter to ensure it's handled by the problem service worker
-      const response = await fetch("/api/challenged-endpoint?via=problem-sw", {
+      const response = await fetch(`/api/test-challenge?via=problem-sw&requests=${numRequests}`, {
         cache: "no-store",
         headers: {
           Pragma: "no-cache",
@@ -172,9 +186,21 @@ export default function Home() {
         throw new Error(errorMessage)
       }
 
-      const data = await response.json()
+      const data = (await response.json()) as TestResponse
       setProblemApiResponse(data)
-      addProblemLog(`API request successful, received stock price: $${data.data.stock.price}`)
+      
+      // Log the results
+      for (const [index, result] of data.results.entries()) {
+        addProblemLog(`Request ${index + 1}: Status ${result.status}${result.status === 403 ? ' (Challenge Detected!)' : ''}`)
+      }
+      
+      // Check if any requests were challenged
+      const challengedRequests = data.results.filter((r) => r.status === 403)
+      if (challengedRequests.length > 0) {
+        addProblemLog(`⚠️ ${challengedRequests.length} requests were challenged!`)
+      } else {
+        addProblemLog('No challenges detected. Try increasing the number of requests.')
+      }
     } catch (err) {
       console.error("API request error:", err)
       setProblemError(`API request failed: ${err instanceof Error ? err.message : String(err)}`)
@@ -430,16 +456,29 @@ export default function Home() {
                   )}
 
                   <div className="space-y-2">
-                    <Button
-                      onClick={makeProblemApiRequest}
-                      disabled={problemLoading || !problemServiceWorkerRegistered}
-                      className="bg-amber-600 hover:bg-amber-700 flex items-center gap-2"
-                    >
-                      {problemLoading ? "Loading..." : "Fetch Stock Data"}
-                      <TrendingUp className="h-4 w-4" />
-                    </Button>
+                    <div className="flex items-center gap-4 mb-4">
+                      <Button
+                        onClick={makeProblemApiRequest}
+                        disabled={problemLoading || !problemServiceWorkerRegistered}
+                        className="bg-amber-600 hover:bg-amber-700 flex items-center gap-2"
+                      >
+                        {problemLoading ? "Loading..." : "Test Challenge"}
+                        <TrendingUp className="h-4 w-4" />
+                      </Button>
+                      <div className="flex items-center gap-2">
+                        <label htmlFor="numRequests" className="text-sm">Requests:</label>
+                        <input
+                          type="number"
+                          id="numRequests"
+                          value={numRequests}
+                          onChange={(e) => setNumRequests(Math.max(1, Number.parseInt(e.target.value, 10) || 1))}
+                          className="w-20 px-2 py-1 text-sm border rounded"
+                          min="1"
+                        />
+                      </div>
+                    </div>
                     <p className="text-sm text-gray-500">
-                      This request will be challenged by Vercel's DDoS protection if configured correctly
+                      Makes multiple rapid requests to try to trigger the Vercel challenge
                     </p>
                   </div>
 
