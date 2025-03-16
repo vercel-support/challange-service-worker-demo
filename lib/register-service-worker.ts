@@ -1,93 +1,57 @@
 /**
- * Registers the service worker and sets up challenge detection
+ * Simple service worker registration for handling Vercel challenges
  */
-export function registerServiceWorker() {
-  if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      console.log("[SERVICE WORKER] 🔄 Attempting to register service worker", {
-        timestamp: new Date().toISOString(),
-      })
-
-      navigator.serviceWorker
-        .register("/sw.js")
-        .then((registration) => {
-          console.log("[SERVICE WORKER] ✅ Registered successfully", {
-            scope: registration.scope,
-            timestamp: new Date().toISOString(),
-          })
-
-          // Set up listener for messages from the service worker
-          setupServiceWorkerMessageListener()
-        })
-        .catch((error) => {
-          console.error("[SERVICE WORKER] ❌ Registration failed", {
-            error: error.message,
-            timestamp: new Date().toISOString(),
-          })
-        })
-    })
-  } else {
-    console.warn("[SERVICE WORKER] ⚠️ Service workers not supported in this browser", {
-      userAgent: navigator.userAgent,
-      timestamp: new Date().toISOString(),
-    })
-  }
-}
 
 /**
- * Sets up a listener for messages from the service worker
+ * Registers the service worker and sets up challenge detection
  */
-function setupServiceWorkerMessageListener() {
-  console.log("[SERVICE WORKER] 🔄 Setting up message listener", {
-    timestamp: new Date().toISOString(),
-  })
+export async function registerServiceWorker(): Promise<void> {
+  if (!("serviceWorker" in navigator)) {
+    console.warn("Service workers not supported in this browser")
+    return
+  }
 
-  navigator.serviceWorker.addEventListener("message", (event) => {
-    console.log("[SERVICE WORKER] 📩 Message received from service worker", {
-      type: event.data?.type,
-      data: event.data,
-      timestamp: new Date().toISOString(),
+  try {
+    const registration = await navigator.serviceWorker.register("/sw.js", {
+      scope: "/",
     })
 
-    // Handle Vercel challenge detection messages
-    if (event.data && event.data.type === "VERCEL_CHALLENGE_DETECTED") {
-      console.log("[SERVICE WORKER] 🛡️ Challenge detection message received", {
-        url: event.data.url,
-        originalUrl: event.data.originalUrl,
-        timestamp: new Date().toISOString(),
-      })
+    console.log("Service worker registered successfully", {
+      scope: registration.scope
+    })
 
-      handleVercelChallengeFromServiceWorker(event.data.url, event.data.originalUrl)
-    }
-  })
+    // Set up message listener for challenge detection
+    navigator.serviceWorker.addEventListener("message", (event) => {
+      if (event.data?.type === "VERCEL_CHALLENGE_DETECTED") {
+        handleVercelChallengeFromServiceWorker(
+          event.data.url,
+          event.data.originalUrl
+        )
+      }
+    })
+
+  } catch (error) {
+    console.error("Service worker registration failed:", error)
+  }
 }
 
 /**
  * Handles a Vercel challenge detected by the service worker
  */
-function handleVercelChallengeFromServiceWorker(challengeUrl: string, returnUrl: string) {
-  console.log("[SERVICE WORKER] 🛡️ Handling challenge from service worker", {
-    challengeUrl,
-    returnUrl: returnUrl || window.location.href,
-    timestamp: new Date().toISOString(),
-  })
-
+function handleVercelChallengeFromServiceWorker(
+  challengeUrl: string,
+  returnUrl: string
+) {
   // Create the challenge resolution URL
   const challengeResolutionUrl = `/api/resolve-challenge?originalUrl=${encodeURIComponent(
     challengeUrl,
   )}&returnUrl=${encodeURIComponent(returnUrl || window.location.href)}`
 
-  console.log("[SERVICE WORKER] 🔀 Redirecting to challenge resolution page", {
-    from: window.location.href,
-    to: challengeResolutionUrl,
-    timestamp: new Date().toISOString(),
-  })
-
-  // Show a notification to the user (optional)
+  // Show a notification if possible
   if ("Notification" in window && Notification.permission === "granted") {
     new Notification("Security Verification Required", {
       body: "Redirecting to complete security verification...",
-      icon: "/favicon.ico",
+      icon: "/favicon.ico"
     })
   }
 
@@ -98,18 +62,58 @@ function handleVercelChallengeFromServiceWorker(challengeUrl: string, returnUrl:
 /**
  * Updates the service worker when a new version is available
  */
-export function updateServiceWorker() {
-  if ("serviceWorker" in navigator) {
-    console.log("[SERVICE WORKER] 🔄 Attempting to update service worker", {
+export async function updateServiceWorker(): Promise<void> {
+  if (!("serviceWorker" in navigator)) return
+
+  try {
+    const registration = await navigator.serviceWorker.ready
+    await registration.update()
+    console.log("[SERVICE WORKER] ✅ Update triggered", {
       timestamp: new Date().toISOString(),
     })
+  } catch (error) {
+    console.error("[SERVICE WORKER] ❌ Update failed", {
+      error: error instanceof Error ? error.message : String(error),
+      timestamp: new Date().toISOString(),
+    })
+  }
+}
 
-    navigator.serviceWorker.ready.then((registration) => {
-      registration.update()
-      console.log("[SERVICE WORKER] ✅ Update triggered", {
+/**
+ * Schedules periodic service worker updates
+ */
+function schedulePeriodicUpdates() {
+  setInterval(async () => {
+    try {
+      await updateServiceWorker()
+    } catch (error) {
+      console.error("[SERVICE WORKER] ❌ Periodic update failed", {
+        error: error instanceof Error ? error.message : String(error),
         timestamp: new Date().toISOString(),
       })
-    })
+    }
+  }, 3600000) // 1 hour
+}
+
+/**
+ * Requests notification permission if not already granted
+ */
+async function requestNotificationPermission() {
+  if (!("Notification" in window)) return
+
+  if (Notification.permission === "default") {
+    try {
+      const permission = await Notification.requestPermission()
+      console.log("[NOTIFICATIONS] 🔔 Permission request result:", {
+        permission,
+        timestamp: new Date().toISOString(),
+      })
+    } catch (error) {
+      console.error("[NOTIFICATIONS] ❌ Permission request failed", {
+        error: error instanceof Error ? error.message : String(error),
+        timestamp: new Date().toISOString(),
+      })
+    }
   }
 }
 
@@ -117,32 +121,38 @@ export function updateServiceWorker() {
  * Unregisters all service workers
  * Useful for debugging or when you need to reset the service worker
  */
-export function unregisterServiceWorkers() {
-  if ("serviceWorker" in navigator) {
-    console.log("[SERVICE WORKER] 🔄 Attempting to unregister all service workers", {
+export async function unregisterServiceWorkers(): Promise<void> {
+  if (!("serviceWorker" in navigator)) return
+
+  try {
+    const registrations = await navigator.serviceWorker.getRegistrations()
+    console.log("[SERVICE WORKER] 📊 Found registrations to unregister:", {
+      count: registrations.length,
       timestamp: new Date().toISOString(),
     })
 
-    navigator.serviceWorker.getRegistrations().then((registrations) => {
-      console.log("[SERVICE WORKER] 📊 Found registrations to unregister:", {
-        count: registrations.length,
-        timestamp: new Date().toISOString(),
-      })
-
-      for (const registration of registrations) {
-        registration.unregister()
+    await Promise.all(
+      registrations.map(async (registration) => {
+        const unregistered = await registration.unregister()
         console.log("[SERVICE WORKER] ✅ Unregistered service worker", {
           scope: registration.scope,
+          success: unregistered,
           timestamp: new Date().toISOString(),
         })
-      }
-
-      console.log("[SERVICE WORKER] 🔄 Reloading page after unregistration", {
-        timestamp: new Date().toISOString(),
       })
+    )
 
-      window.location.reload()
+    console.log("[SERVICE WORKER] 🔄 Reloading page after unregistration", {
+      timestamp: new Date().toISOString(),
     })
+
+    window.location.reload()
+  } catch (error) {
+    console.error("[SERVICE WORKER] ❌ Unregistration failed", {
+      error: error instanceof Error ? error.message : String(error),
+      timestamp: new Date().toISOString(),
+    })
+    throw error
   }
 }
 

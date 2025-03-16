@@ -5,10 +5,12 @@ export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
   const returnUrl = searchParams.get("returnUrl") || "/"
   const originalUrl = searchParams.get("originalUrl")
+  const requestId = searchParams.get("requestId")
 
   console.log("[CHALLENGE RESOLUTION PAGE] 🛡️", {
     originalUrl,
     returnUrl,
+    requestId,
     timestamp: new Date().toISOString(),
     userAgent: request.headers.get("user-agent"),
     ip: request.headers.get("x-forwarded-for") || "unknown",
@@ -21,7 +23,7 @@ export async function GET(request: NextRequest) {
     <!DOCTYPE html>
     <html>
       <head>
-        <title>Resolving Security Check</title>
+        <title>Security Verification Required</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
           body {
@@ -30,24 +32,25 @@ export async function GET(request: NextRequest) {
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            height: 100vh;
+            min-height: 100vh;
             margin: 0;
             padding: 20px;
             text-align: center;
             background-color: #f5f5f5;
+            color: #333;
           }
           .card {
             background: white;
-            border-radius: 8px;
-            padding: 20px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border-radius: 12px;
+            padding: 32px;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
             max-width: 500px;
             width: 100%;
           }
           .spinner {
-            border: 4px solid rgba(0, 0, 0, 0.1);
+            border: 3px solid rgba(0, 0, 0, 0.1);
             border-radius: 50%;
-            border-top: 4px solid #000;
+            border-top: 3px solid #000;
             width: 24px;
             height: 24px;
             animation: spin 1s linear infinite;
@@ -58,89 +61,208 @@ export async function GET(request: NextRequest) {
             100% { transform: rotate(360deg); }
           }
           .log {
-            background: #f0f0f0;
-            border-radius: 4px;
-            padding: 8px;
-            margin-top: 16px;
-            font-family: monospace;
+            background: #f7f7f7;
+            border-radius: 8px;
+            padding: 12px;
+            margin-top: 20px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
             text-align: left;
             font-size: 12px;
-            max-height: 100px;
+            max-height: 120px;
             overflow-y: auto;
+            border: 1px solid #eaeaea;
+          }
+          .log-entry {
+            margin: 4px 0;
+            line-height: 1.4;
+          }
+          .error {
+            color: #e11d48;
+          }
+          .success {
+            color: #059669;
+          }
+          .warning {
+            color: #d97706;
+          }
+          .retry-button {
+            background: #000;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            margin-top: 16px;
+            transition: background-color 0.2s;
+          }
+          .retry-button:hover {
+            background: #333;
+          }
+          .retry-button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+          }
+          @media (prefers-color-scheme: dark) {
+            body {
+              background-color: #1a1a1a;
+              color: #fff;
+            }
+            .card {
+              background: #262626;
+            }
+            .log {
+              background: #333;
+              border-color: #404040;
+            }
+            .retry-button {
+              background: #fff;
+              color: #000;
+            }
+            .retry-button:hover {
+              background: #e5e5e5;
+            }
+            .retry-button:disabled {
+              background: #404040;
+              color: #666;
+            }
           }
         </style>
       </head>
       <body>
         <div class="card">
-          <h2>Security Verification</h2>
-          <p>We're verifying your browser to protect our service from automated requests.</p>
+          <h2>Security Verification Required</h2>
+          <p>We're verifying your browser to protect our service. This should only take a moment.</p>
           <div class="spinner"></div>
           <p id="status">Initiating verification...</p>
           <div id="log" class="log"></div>
+          <button id="retryButton" class="retry-button" style="display: none;" onclick="retryVerification()">
+            Retry Verification
+          </button>
         </div>
         
         <script>
+          const MAX_RETRIES = 3;
+          const RETRY_DELAY = 2000;
+          let retryCount = 0;
+          let isVerifying = false;
+
           // Function to update the status message
-          function updateStatus(message) {
-            document.getElementById('status').textContent = message;
+          function updateStatus(message, type = 'info') {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = type;
           }
           
           // Function to add a log entry
-          function addLog(message) {
+          function addLog(message, type = 'info') {
             const logEl = document.getElementById('log');
             const entry = document.createElement('div');
+            entry.className = \`log-entry \${type}\`;
             entry.textContent = \`[\${new Date().toLocaleTimeString()}] \${message}\`;
-            logEl.prepend(entry);
+            logEl.insertBefore(entry, logEl.firstChild);
             
-            // Also log to console for Vercel logs
-            console.log('[CHALLENGE RESOLUTION CLIENT] 🛡️', message);
+            // Also log to console for debugging
+            console.log(\`[CHALLENGE RESOLUTION] [\${type.toUpperCase()}] \${message}\`);
+          }
+
+          // Function to show/hide retry button
+          function toggleRetryButton(show) {
+            const button = document.getElementById('retryButton');
+            button.style.display = show ? 'inline-block' : 'none';
+            button.disabled = isVerifying;
           }
           
-          // Function to fetch the original URL to trigger the challenge
-          async function resolveChallenge() {
+          // Function to verify the browser and handle the challenge
+          async function verifyBrowser() {
+            if (isVerifying) return;
+            isVerifying = true;
+            toggleRetryButton(false);
+
             try {
-              updateStatus('Verifying your browser...');
+              updateStatus('Verifying your browser...', 'info');
               addLog('Starting browser verification process');
               
-              // The original URL that triggered the challenge
               const originalUrl = ${JSON.stringify(originalUrl)};
+              const requestId = ${JSON.stringify(requestId)};
               
               if (originalUrl) {
-                addLog(\`Fetching original URL: \${originalUrl}\`);
+                addLog(\`Attempting to verify URL: \${originalUrl}\`);
                 
-                // Make a fetch request to the original URL to trigger the challenge
-                const response = await fetch(originalUrl);
+                // Make a fetch request to the original URL to trigger/resolve the challenge
+                const response = await fetch(originalUrl, {
+                  credentials: 'include', // Include cookies
+                  headers: {
+                    'X-Request-ID': requestId || 'unknown',
+                  }
+                });
                 
-                // If we get here, the challenge was likely resolved
-                addLog(\`Received response: \${response.status} \${response.statusText}\`);
-                updateStatus('Verification complete! Redirecting...');
+                if (response.ok) {
+                  addLog('Verification successful!', 'success');
+                  updateStatus('Verification complete! Redirecting...', 'success');
+                  
+                  // Small delay before redirect to show success message
+                  setTimeout(() => {
+                    window.location.href = ${JSON.stringify(returnUrl)};
+                  }, 1000);
+                  return;
+                }
+                
+                // If we get a 403, the challenge might need more time
+                if (response.status === 403) {
+                  throw new Error('Challenge verification in progress');
+                }
+                
+                throw new Error(\`Unexpected response: \${response.status}\`);
               } else {
-                // If no original URL was provided, just wait a moment
-                addLog('No original URL provided, preparing verification');
-                updateStatus('Preparing verification...');
+                addLog('No verification URL provided', 'warning');
+                updateStatus('Preparing verification...', 'warning');
                 await new Promise(resolve => setTimeout(resolve, 1000));
               }
               
-              // Log before redirect
+              // If we get here without a redirect, try the return URL
               addLog(\`Redirecting to: \${${JSON.stringify(returnUrl)}}\`);
-              
-              // Redirect back to the return URL
               window.location.href = ${JSON.stringify(returnUrl)};
-            } catch (error) {
-              console.error('Error during challenge resolution:', error);
-              addLog(\`Error: \${error.message}\`);
-              updateStatus('Verification in progress. This may take a moment...');
               
-              // Wait a bit longer and try to redirect anyway
-              setTimeout(() => {
-                addLog('Timeout reached, attempting redirect anyway');
-                window.location.href = ${JSON.stringify(returnUrl)};
-              }, 3000);
+            } catch (error) {
+              console.error('Error during verification:', error);
+              addLog(\`Error: \${error.message}\`, 'error');
+              
+              if (retryCount < MAX_RETRIES) {
+                retryCount++;
+                addLog(\`Retry \${retryCount}/\${MAX_RETRIES} in \${RETRY_DELAY/1000}s...`, 'warning');
+                updateStatus(\`Verification failed. Retrying in \${RETRY_DELAY/1000} seconds...\`, 'warning');
+                
+                setTimeout(() => {
+                  isVerifying = false;
+                  verifyBrowser();
+                }, RETRY_DELAY);
+              } else {
+                updateStatus('Verification failed. Please try again.', 'error');
+                addLog('Maximum retry attempts reached', 'error');
+                toggleRetryButton(true);
+              }
+            } finally {
+              isVerifying = false;
             }
           }
           
-          // Start the challenge resolution process
-          resolveChallenge();
+          // Function to manually retry verification
+          function retryVerification() {
+            retryCount = 0;
+            verifyBrowser();
+          }
+          
+          // Start the verification process
+          verifyBrowser();
+          
+          // Listen for visibility changes to retry verification when tab becomes visible
+          document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && !isVerifying) {
+              addLog('Tab became visible, retrying verification...', 'info');
+              retryVerification();
+            }
+          });
         </script>
       </body>
     </html>
@@ -149,6 +271,7 @@ export async function GET(request: NextRequest) {
   return new NextResponse(html, {
     headers: {
       "Content-Type": "text/html",
+      "Cache-Control": "no-store, must-revalidate",
     },
   })
 }
